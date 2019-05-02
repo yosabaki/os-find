@@ -189,7 +189,11 @@ void walk(const string &path, const filter &filter) {
     while ((entry = readdir(dir)) != nullptr) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        string fullPath = path + fileSeparator + entry->d_name;
+        string separator;
+        if (path.back() == fileSeparator) {
+            separator = "";
+        } else separator = fileSeparator;
+        string fullPath = path + separator + entry->d_name;
 
         if (entry->d_type == DT_DIR) {
             walk(fullPath, filter);
