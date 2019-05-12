@@ -21,39 +21,12 @@ bool file_exists(const string &path) {
     return (stat(path.c_str(), &buffer) == 0);
 }
 
-struct command {
-    std::string path;
-    std::vector<char *> argv;
-
-    explicit command(const string &path) : path(path), argv(2) {
-        argv[0] = new char[path.size()];
-        path.copy(argv[0], path.size());
-        argv[1] = nullptr;
-    }
-
-    explicit command(const std::vector<std::string> &args) : path(args[0]), argv(args.size() + 1) {
-        for (int i = 0; i < args.size(); i++) {
-            argv[i] = new char[args[i].size()];
-            args[i].copy(argv[i], args[i].size());
-        }
-        argv.back() = nullptr;
-    }
-
-    command() : path(), argv{nullptr} {}
-
-    ~command() {
-        for (auto &i : argv) {
-            delete[]i;
-        }
-    }
-};
-
-int execve(const command &cmd, const string &path) {
+int execve(const string &cmd_path, const string &path) {
     vector<char *> argv(3);
-    argv[0] = const_cast<char *> (cmd.path.data());
+    argv[0] = const_cast<char *> (cmd_path.data());
     argv[1] = const_cast<char *> (path.data());
     argv[2] = nullptr;
-    return execve(cmd.path.data(), argv.data(), environ);
+    return execve(cmd_path.data(), argv.data(), environ);
 }
 
 struct filter {
@@ -70,7 +43,7 @@ private:
 
     vector<pair<off_t, COMPARATOR >> sizes;
     vector<nlink_t> hardlinks;
-    command exec;
+    string exec;
 
 public:
     explicit filter(const vector<pair<string, string>> &modifiers) {
@@ -108,7 +81,7 @@ public:
                 if (!file_exists(m.second)) {
                     throw runtime_error("invalid path to executable: " + m.second);
                 }
-                exec = command(m.second);
+                exec = m.second;
             }
         }
     }
@@ -151,7 +124,7 @@ public:
         if (!tmp) return false;
         tmp = hardlinks.empty();
         for (auto &hardlink: hardlinks) {
-            tmp |= (st.st_nlink != hardlink);
+	    tmp |= (st.st_nlink == hardlink);
         }
         if (!tmp) return false;
         tmp = sizes.empty();
@@ -174,7 +147,7 @@ public:
     }
 
     bool executable() const {
-        return !exec.path.empty();
+        return !exec.empty();
     }
 };
 
@@ -183,7 +156,7 @@ void walk(const string &path, const filter &filter) {
     struct dirent *entry;
 
     if (dir == nullptr) {
-        cout << "Can't access directory " + path << endl;
+        cerr << "Can't access directory " + path << endl;
         return;
     }
     while ((entry = readdir(dir)) != nullptr) {
@@ -194,19 +167,25 @@ void walk(const string &path, const filter &filter) {
             separator = "";
         } else separator = fileSeparator;
         string fullPath = path + separator + entry->d_name;
-
-        if (entry->d_type == DT_DIR) {
-            walk(fullPath, filter);
-        } else if (entry->d_type == DT_REG) {
-            if (filter.apply(entry, fullPath)) {
-                cout << fullPath << endl;
-                if (filter.executable()) {
-                    filter.invoke(fullPath);
+        try {
+            if (entry->d_type == DT_DIR) {
+                walk(fullPath, filter);
+            } else if (entry->d_type == DT_REG) {
+                if (filter.apply(entry, fullPath)) {
+                    cout << fullPath << endl;
+                    if (filter.executable()) {
+                        filter.invoke(fullPath);
+                    }
                 }
             }
-        }
+	} catch (exception &e) {
+            closedir(dir);
+	    throw e;
+	}
     }
-
+    if (closedir(dir) < 0) {
+        throw runtime_error("Can't close a directory " + path);
+    }
 }
 
 void print_usage() {
@@ -244,7 +223,7 @@ int main(int argc, char **argv) {
     }
     try {
         walk(path, filter(modifiers));
-    } catch (runtime_error &e) {
+    } catch (exception &e) {
         cerr << e.what() << endl;
     }
     return 0;
